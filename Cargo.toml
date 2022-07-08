@@ -1,6 +1,6 @@
 [package]
 name = "futures-retry-policies"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 authors = ["Conrad Ludgate <conradludgate@gmail.com>"]
 description = "Retriable Futures"
@@ -12,17 +12,21 @@ categories = ["network-programming"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-retry-policies = "0.1.1"
-chrono = "0.4"
 pin-project = "1"
 
 tokio = { version = "1", optional = true, features = ["time"] }
+
+retry-policies = { version = "0.1.1", optional = true }
+chrono = { version = "0.4", optional = true }
+
+tracing = { version = "0.1", optional = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
 
 [features]
-default = []
+default = ["retry-policies", "tokio", "tracing"]
+retry-policies = ["dep:retry-policies", "chrono"]
 
 # Properly document all features on docs.rs
 [package.metadata.docs.rs]

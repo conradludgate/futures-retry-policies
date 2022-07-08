@@ -1,192 +1,118 @@
-//! Retry a future using the given [backoff policy](`RetryPolicy`) and sleep function.
+#![cfg_attr(docsrs, feature(doc_cfg))]
+//! A crate to help retry futures.
 //!
 //! ```
-//! use futures_retry_policies::{tokio::retry, ShouldRetry};
-//! use retry_policies::policies::ExponentialBackoff;
+//! use futures_retry_policies::{retry, RetryPolicy};
+//! use std::{ops::ControlFlow, time::Duration};
 //!
-//! # #[derive(Debug)]
-//! enum Error { Retry, DoNotRetry }
-//! impl ShouldRetry for Error {
-//!     fn should_retry(&self) -> bool { matches!(self, Error::Retry) }
+//! // 1. Create your retry policy
+//!
+//! /// Retries a request n times
+//! pub struct Retries(usize);
+//!
+//! // 2. Define how your policy behaves
+//!
+//! impl RetryPolicy<Result<(), &'static str>> for Retries {
+//!     fn should_retry(&mut self, result: Result<(), &'static str>) -> ControlFlow<Result<(), &'static str>, Duration> {
+//!         if self.0 > 0 && result.is_err() {
+//!             self.0 -= 1;
+//!             // continue to retry on error
+//!             ControlFlow::Continue(Duration::from_millis(100))
+//!         } else {
+//!             // We've got a success, or we've exhauted our retries, so break
+//!             ControlFlow::Break(result)
+//!         }
+//!     }
 //! }
-//! async fn make_request() -> Result<(), Error>  {
+//!
+//! async fn make_request() -> Result<(), &'static str>  {
 //!     // make a request
 //!     # static COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-//!     # if COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < 2 { Err(Error::Retry) } else { Ok(()) }
+//!     # if COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < 2 { Err("fail") } else { Ok(()) }
 //! }
 //!
 //! #[tokio::main]
-//! async fn main() -> Result<(), Error> {
-//!     let backoff = ExponentialBackoff::builder().build_with_max_retries(3);
-//!     retry(backoff, make_request).await
+//! async fn main() -> Result<(), &'static str> {
+//!     // 3. Await the retry with your policy, a sleep function, and your async function.
+//!     retry(Retries(3), tokio::time::sleep, make_request).await
 //! }
 //! ```
-#![cfg_attr(docsrs, feature(doc_cfg))]
+
+pub mod retry_policies;
+pub mod tokio;
+pub mod tracing;
 
 use std::{
     future::Future,
+    ops::ControlFlow,
     pin::Pin,
     task::{Context, Poll},
     time::Duration,
 };
 
-use chrono::Utc;
 use pin_project::pin_project;
-use retry_policies::{RetryDecision, RetryPolicy};
 
-pub trait ShouldRetry {
-    fn should_retry(&self) -> bool;
+/// Policy to decide whether a result should be retried
+pub trait RetryPolicy<Res> {
+    /// Determine if the request should be retried under the given policy.
+    /// Return `Break(result)` if we are done retrying
+    /// Else, return `Continue(duration)` to sleep for that duration.
+    fn should_retry(&mut self, result: Res) -> ControlFlow<Res, Duration>;
 }
 
-impl<T, E: ShouldRetry> ShouldRetry for Result<T, E> {
-    /// Returns true if the error should retry. Returns false if ok.
-    fn should_retry(&self) -> bool {
-        match self {
-            Ok(_) => false,
-            Err(e) => e.should_retry(),
-        }
+impl<P: RetryPolicy<R>, R> RetryPolicy<R> for &mut P {
+    fn should_retry(&mut self, result: R) -> ControlFlow<R, Duration> {
+        P::should_retry(self, result)
     }
 }
 
-impl<T> ShouldRetry for Option<T> {
-    /// Returns true if the value is None.
-    fn should_retry(&self) -> bool {
-        self.is_none()
-    }
-}
-
-/// Retry features for the [tokio runtime](https:://tokio.rs)
-#[cfg(feature = "tokio")]
-#[cfg_attr(docsrs, doc(cfg(feature = "tokio")))]
-pub mod tokio {
-    use retry_policies::RetryPolicy;
-    use std::{future::Future, time::Duration};
-    use tokio::time::{sleep, Sleep};
-
-    use crate::{RetryFuture, ShouldRetry};
-
-    /// Retry a future using the given [backoff policy](`RetryPolicy`) and [tokio's sleep](`sleep`) method.
-    ///
-    /// ```
-    /// use futures_retry_policies::{tokio::retry, ShouldRetry};
-    /// use retry_policies::policies::ExponentialBackoff;
-    ///
-    /// # #[derive(Debug)]
-    /// enum Error { Retry, DoNotRetry }
-    /// impl ShouldRetry for Error {
-    ///     fn should_retry(&self) -> bool { matches!(self, Error::Retry) }
-    /// }
-    /// async fn make_request() -> Result<(), Error>  {
-    ///     // make a request
-    ///     # static COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    ///     # if COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < 2 { Err(Error::Retry) } else { Ok(()) }
-    /// }
-    ///
-    /// #[tokio::main]
-    /// async fn main() -> Result<(), Error> {
-    ///     let backoff = ExponentialBackoff::builder().build_with_max_retries(3);
-    ///     retry(backoff, make_request).await
-    /// }
-    /// ```
-    pub fn retry<Policy, Futures, Fut>(
-        backoff: Policy,
-        futures: Futures,
-    ) -> RetryFuture<Policy, fn(Duration) -> Sleep, Sleep, Futures, Fut>
-    where
-        Policy: RetryPolicy,
-        Futures: Fn() -> Fut,
-        Fut: Future,
-        Fut::Output: ShouldRetry,
-    {
-        super::retry(backoff, sleep, futures)
-    }
-
-    /// Easy helper trait to retry futures
-    ///
-    /// ```
-    /// use futures_retry_policies::{tokio::RetryFutureExt, ShouldRetry};
-    /// use retry_policies::policies::ExponentialBackoff;
-    ///
-    /// # #[derive(Debug)]
-    /// enum Error { Retry, DoNotRetry }
-    /// impl ShouldRetry for Error {
-    ///     fn should_retry(&self) -> bool { matches!(self, Error::Retry) }
-    /// }
-    /// async fn make_request() -> Result<(), Error>  {
-    ///     // make a request
-    ///     # static COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    ///     # if COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < 2 { Err(Error::Retry) } else { Ok(()) }
-    /// }
-    ///
-    /// #[tokio::main]
-    /// async fn main() -> Result<(), Error> {
-    ///     let backoff = ExponentialBackoff::builder().build_with_max_retries(3);
-    ///     make_request.retry(backoff).await
-    /// }
-    /// ```
-    pub trait RetryFutureExt<Fut>
-    where
-        Fut: Future,
-        Fut::Output: ShouldRetry,
-    {
-        fn retry<Policy>(self, backoff: Policy) -> RetryFuture<Policy, fn(Duration) -> Sleep, Sleep, Self, Fut>
-        where
-            Policy: RetryPolicy,
-            Self: Fn() -> Fut + Sized,
-        {
-            retry(backoff, self)
-        }
-    }
-
-    impl<Futures, Fut> RetryFutureExt<Fut> for Futures
-    where
-        Futures: Fn() -> Fut,
-        Fut: Future,
-        Fut::Output: ShouldRetry,
-    {}
-}
-
-/// Retry a future using the given [backoff policy](`RetryPolicy`) and sleep function.
+/// Retry a future using the given [retry policy](`RetryPolicy`) and sleep function.
 ///
 /// ```
-/// use futures_retry_policies::{retry, ShouldRetry};
-/// use retry_policies::policies::ExponentialBackoff;
+/// use futures_retry_policies::{retry, RetryPolicy};
+/// use std::{ops::ControlFlow, time::Duration};
 ///
-/// # #[derive(Debug)]
-/// enum Error { Retry, DoNotRetry }
-/// impl ShouldRetry for Error {
-///     fn should_retry(&self) -> bool { matches!(self, Error::Retry) }
+/// pub struct Retries(usize);
+/// impl RetryPolicy<Result<(), &'static str>> for Retries {
+///     fn should_retry(&mut self, result: Result<(), &'static str>) -> ControlFlow<Result<(), &'static str>, Duration> {
+///         if self.0 > 0 && result.is_err() {
+///             self.0 -= 1;
+///             // continue to retry on error
+///             ControlFlow::Continue(Duration::from_millis(100))
+///         } else {
+///             // We've got a success, or we've exhauted our retries, so break
+///             ControlFlow::Break(result)
+///         }
+///     }
 /// }
-/// async fn make_request() -> Result<(), Error>  {
+///
+/// async fn make_request() -> Result<(), &'static str>  {
 ///     // make a request
 ///     # static COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-///     # if COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < 2 { Err(Error::Retry) } else { Ok(()) }
+///     # if COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < 2 { Err("fail") } else { Ok(()) }
 /// }
 ///
 /// #[tokio::main]
-/// async fn main() -> Result<(), Error> {
-///     let backoff = ExponentialBackoff::builder().build_with_max_retries(3);
-///     retry(backoff, tokio::time::sleep, make_request).await
+/// async fn main() -> Result<(), &'static str> {
+///     retry(Retries(3), tokio::time::sleep, make_request).await
 /// }
 /// ```
 pub fn retry<Policy, Sleeper, Sleep, Futures, Fut>(
-    backoff: Policy,
+    policy: Policy,
     sleeper: Sleeper,
     futures: Futures,
 ) -> RetryFuture<Policy, Sleeper, Sleep, Futures, Fut>
 where
-    Policy: RetryPolicy,
+    Policy: RetryPolicy<Fut::Output>,
     Sleeper: Fn(Duration) -> Sleep,
     Sleep: Future<Output = ()>,
     Futures: Fn() -> Fut,
     Fut: Future,
-    Fut::Output: ShouldRetry,
 {
     RetryFuture {
-        backoff,
+        policy,
         sleeper,
         futures,
-        retries: 0,
         state: RetryState::Idle,
     }
 }
@@ -194,10 +120,9 @@ where
 /// [`Future`] returned by [`retry`]
 #[pin_project]
 pub struct RetryFuture<Policy, Sleeper, Sleep, Futures, Fut> {
-    backoff: Policy,
+    policy: Policy,
     sleeper: Sleeper,
     futures: Futures,
-    retries: u32,
     #[pin]
     state: RetryState<Sleep, Fut>,
 }
@@ -212,12 +137,11 @@ enum RetryState<Sleep, Fut> {
 impl<Policy, Sleeper, Sleep, Futures, Fut> Future
     for RetryFuture<Policy, Sleeper, Sleep, Futures, Fut>
 where
-    Policy: RetryPolicy,
+    Policy: RetryPolicy<Fut::Output>,
     Sleeper: Fn(Duration) -> Sleep,
     Sleep: Future<Output = ()>,
     Futures: Fn() -> Fut,
     Fut: Future,
-    Fut::Output: ShouldRetry,
 {
     type Output = Fut::Output;
 
@@ -227,20 +151,18 @@ where
         // 1. State goes from idle to attempting
         // 2. Once the attempt is ready, it checks if a retry is necessary.
         // 3. If a retry is necessary:
-        //   i.   It increments the retries count and then transitions to sleeping.
-        //   ii.  It then transitions back to idle.
-        //   iii. And then loops back to 1
+        //   i.   We transition to sleeping.
+        //   ii.  And then transition back to idle.
+        //   iii. And then loop back to 1
         loop {
             match this.state.as_mut().project() {
                 RetryStateProj::Idle => this.state.set(RetryState::Attempts((this.futures)())),
                 RetryStateProj::Attempts(fut) => match fut.poll(cx) {
-                    Poll::Ready(res) => match this.backoff.should_retry(*this.retries) {
-                        RetryDecision::Retry { execute_after } if res.should_retry() => {
-                            *this.retries += 1;
-                            let dur = (execute_after - Utc::now()).to_std().unwrap_or_default();
-                            this.state.set(RetryState::Sleeping((this.sleeper)(dur)));
+                    Poll::Ready(res) => match this.policy.should_retry(res) {
+                        ControlFlow::Continue(sleep) => {
+                            this.state.set(RetryState::Sleeping((this.sleeper)(sleep)));
                         }
-                        _ => return Poll::Ready(res),
+                        ControlFlow::Break(res) => return Poll::Ready(res),
                     },
                     Poll::Pending => return Poll::Pending,
                 },
@@ -250,84 +172,5 @@ where
                 },
             }
         }
-    }
-}
-
-/// A [`ShouldRetry`] wrapper that always returns true
-#[derive(Debug)]
-pub struct AlwaysRetry<T>(pub T);
-impl<T> ShouldRetry for AlwaysRetry<T> {
-    fn should_retry(&self) -> bool {
-        true
-    }
-}
-
-/// A [`ShouldRetry`] wrapper that always returns false
-#[derive(Debug)]
-pub struct NeverRetry<T>(pub T);
-impl<T> ShouldRetry for NeverRetry<T> {
-    fn should_retry(&self) -> bool {
-        false
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::sync::Mutex;
-
-    use crate::{AlwaysRetry, NeverRetry};
-
-    use super::retry;
-    use retry_policies::policies::ExponentialBackoff;
-    use tokio::task::yield_now;
-
-    #[tokio::test]
-    async fn retries() {
-        let backoff = ExponentialBackoff::builder().build_with_max_retries(3);
-
-        let timeouts = Mutex::new(vec![]);
-        let sleep = |dur| {
-            timeouts.lock().unwrap().push(dur);
-            yield_now()
-        };
-        let _: AlwaysRetry<()> = retry(backoff, sleep, || async { AlwaysRetry(()) }).await;
-
-        assert_eq!(timeouts.lock().unwrap().len(), 3); // 3 total retry attempts
-    }
-
-    #[tokio::test]
-    async fn eventually_succeed() {
-        let backoff = ExponentialBackoff::builder().build_with_max_retries(3);
-
-        let timeouts = Mutex::new(vec![]);
-        let sleep = |dur| {
-            timeouts.lock().unwrap().push(dur);
-            yield_now()
-        };
-        retry(backoff, sleep, || async {
-            if timeouts.lock().unwrap().len() < 2 {
-                Err(AlwaysRetry(()))
-            } else {
-                Ok(())
-            }
-        })
-        .await
-        .unwrap();
-
-        assert_eq!(timeouts.lock().unwrap().len(), 2); // succeeds after 2 retries
-    }
-
-    #[tokio::test]
-    async fn immediately_succeed() {
-        let backoff = ExponentialBackoff::builder().build_with_max_retries(3);
-
-        let timeouts = Mutex::new(vec![]);
-        let sleep = |dur| {
-            timeouts.lock().unwrap().push(dur);
-            yield_now()
-        };
-        retry(backoff, sleep, || async { NeverRetry(()) }).await;
-
-        assert!(timeouts.lock().unwrap().is_empty()); // no retries
     }
 }
