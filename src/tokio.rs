@@ -7,7 +7,7 @@ use tokio::time::{sleep, Sleep};
 
 use crate::{RetryFuture, RetryPolicy};
 
-/// Retry a future using the given [backoff policy](`RetryPolicy`) and [tokio's sleep](`sleep`) method.
+/// Retry a future using the given [retry policy](`RetryPolicy`) and [tokio's sleep](`sleep`) method.
 ///
 /// ```
 /// use futures_retry_policies::{tokio::retry, RetryPolicy};

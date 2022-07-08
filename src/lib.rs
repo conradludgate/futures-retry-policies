@@ -1,4 +1,42 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
+//! A crate to help retry futures.
+//!
+//! ```
+//! use futures_retry_policies::{retry, RetryPolicy};
+//! use std::{ops::ControlFlow, time::Duration};
+//!
+//! // 1. Create your retry policy
+//!
+//! /// Retries a request n times
+//! pub struct Retries(usize);
+//!
+//! // 2. Define how your policy behaves
+//!
+//! impl RetryPolicy<Result<(), &'static str>> for Retries {
+//!     fn should_retry(&mut self, result: Result<(), &'static str>) -> ControlFlow<Result<(), &'static str>, Duration> {
+//!         if self.0 > 0 && result.is_err() {
+//!             self.0 -= 1;
+//!             // continue to retry on error
+//!             ControlFlow::Continue(Duration::from_millis(100))
+//!         } else {
+//!             // We've got a success, or we've exhauted our retries, so break
+//!             ControlFlow::Break(result)
+//!         }
+//!     }
+//! }
+//!
+//! async fn make_request() -> Result<(), &'static str>  {
+//!     // make a request
+//!     # static COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+//!     # if COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < 2 { Err("fail") } else { Ok(()) }
+//! }
+//!
+//! #[tokio::main]
+//! async fn main() -> Result<(), &'static str> {
+//!     // 3. Await the retry with your policy, a sleep function, and your async function.
+//!     retry(Retries(3), tokio::time::sleep, make_request).await
+//! }
+//! ```
 
 pub mod retry_policies;
 pub mod tokio;
@@ -13,7 +51,6 @@ use std::{
 };
 
 use pin_project::pin_project;
-// use retry_policies::{RetryDecision, RetryPolicy};
 
 /// Policy to decide whether a result should be retried
 pub trait RetryPolicy<Res> {
@@ -29,7 +66,7 @@ impl<P: RetryPolicy<R>, R> RetryPolicy<R> for &mut P {
     }
 }
 
-/// Retry a future using the given [backoff policy](`RetryPolicy`) and sleep function.
+/// Retry a future using the given [retry policy](`RetryPolicy`) and sleep function.
 ///
 /// ```
 /// use futures_retry_policies::{retry, RetryPolicy};
