@@ -1,62 +1,16 @@
-#![cfg(feature = "tokio")]
-#![cfg_attr(docsrs, doc(cfg(feature = "tokio")))]
-//! Retry features for the [tokio runtime](https:://tokio.rs)
+//! Blocking retries
+//!
+//! While this crate is intended for use with futures, there's nothing that stops [`RetryPolicy`]
+//! from working in a sync fashion.
 
-use std::{future::Future, time::Duration};
-use tokio::time::{sleep, Sleep};
+use std::{ops::ControlFlow, thread};
 
 use crate::RetryPolicy;
 
-/// Retry a future using the given [retry policy](`RetryPolicy`) and [tokio's sleep](`sleep`) method.
+/// Blocking retry function
 ///
-/// ```
-/// use futures_retry_policies::{tokio::retry, RetryPolicy};
-/// use std::{ops::ControlFlow, time::Duration};
-///
-/// pub struct Retries(usize);
-/// impl RetryPolicy<Result<(), &'static str>> for Retries {
-///     fn should_retry(&mut self, result: Result<(), &'static str>) -> ControlFlow<Result<(), &'static str>, Duration> {
-///         if self.0 > 0 && result.is_err() {
-///             self.0 -= 1;
-///             // continue to retry on error
-///             ControlFlow::Continue(Duration::from_millis(100))
-///         } else {
-///             // We've got a success, or we've exhauted our retries, so break
-///             ControlFlow::Break(result)
-///         }
-///     }
-/// }
-///
-/// async fn make_request() -> Result<(), &'static str>  {
-///     // make a request
-///     # static COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-///     # if COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < 2 { Err("fail") } else { Ok(()) }
-/// }
-///
-/// #[tokio::main]
-/// async fn main() -> Result<(), &'static str> {
-///     retry(Retries(3), make_request).await
-/// }
-/// ```
-pub fn retry<Policy, Futures, Fut>(
-    backoff: Policy,
-    futures: Futures,
-) -> RetryFuture<Policy, Futures, Fut>
-where
-    Policy: RetryPolicy<Fut::Output>,
-    Futures: Fn() -> Fut,
-    Fut: Future,
-{
-    super::retry(backoff, sleep, futures)
-}
-
-pub type RetryFuture<Policy, Futures, Fut> =
-    crate::RetryFuture<Policy, fn(Duration) -> Sleep, Sleep, Futures, Fut>;
-
-/// Easy helper trait to retry futures
-///
-/// ```
-/// use futures_retry_policies::{tokio::RetryFutureExt, RetryPolicy};
+/// ```rust
+/// use futures_retry_policies::{sync::retry, RetryPolicy};
 /// use std::{ops::ControlFlow, time::Duration};
 ///
 /// pub struct Attempts(usize);
@@ -73,33 +27,67 @@ pub type RetryFuture<Policy, Futures, Fut> =
 ///     }
 /// }
 ///
-/// async fn make_request() -> Result<(), &'static str>  {
+/// fn make_request() -> Result<(), &'static str>  {
 ///     // make a request
 ///     # static COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 ///     # if COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < 2 { Err("fail") } else { Ok(()) }
 /// }
 ///
-/// #[tokio::main]
-/// async fn main() -> Result<(), &'static str> {
-///     make_request.retry(Attempts(3)).await
+/// fn main() -> Result<(), &'static str> {
+///     retry(Attempts(3), make_request)
 /// }
 /// ```
-pub trait RetryFutureExt<Fut>
+pub fn retry<Policy, F, Output>(mut policy: Policy, f: F) -> Output
 where
-    Fut: Future,
+    Policy: RetryPolicy<Output>,
+    F: Fn() -> Output,
 {
-    fn retry<Policy>(self, policy: Policy) -> RetryFuture<Policy, Self, Fut>
+    loop {
+        match policy.should_retry(f()) {
+            ControlFlow::Continue(dur) => thread::sleep(dur),
+            ControlFlow::Break(result) => break result,
+        }
+    }
+}
+
+/// Easy helper trait to retry functions
+///
+/// ```
+/// use futures_retry_policies::{sync::RetryFnExt, RetryPolicy};
+/// use std::{ops::ControlFlow, time::Duration};
+///
+/// pub struct Attempts(usize);
+/// impl RetryPolicy<Result<(), &'static str>> for Attempts {
+///     fn should_retry(&mut self, result: Result<(), &'static str>) -> ControlFlow<Result<(), &'static str>, Duration> {
+///         self.0 -= 1;
+///         if self.0 > 0 && result.is_err() {
+///             // continue to retry on error
+///             ControlFlow::Continue(Duration::from_millis(100))
+///         } else {
+///             // We've got a success, or we've exhauted our retries, so break
+///             ControlFlow::Break(result)
+///         }
+///     }
+/// }
+///
+/// fn make_request() -> Result<(), &'static str>  {
+///     // make a request
+///     # static COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+///     # if COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < 2 { Err("fail") } else { Ok(()) }
+/// }
+///
+/// fn main() -> Result<(), &'static str> {
+///     make_request.retry(Attempts(3))
+/// }
+/// ```
+pub trait RetryFnExt<Output> {
+    fn retry<Policy>(self, policy: Policy) -> Output
     where
-        Policy: RetryPolicy<Fut::Output>,
-        Self: Fn() -> Fut + Sized,
+        Policy: RetryPolicy<Output>,
+        Self: Fn() -> Output + Sized,
     {
         retry(policy, self)
     }
 }
 
-impl<Futures, Fut> RetryFutureExt<Fut> for Futures
-where
-    Futures: Fn() -> Fut,
-    Fut: Future,
-{
-}
+impl<Futures, Output> RetryFnExt<Output> for Futures where Futures: Fn() -> Output {}

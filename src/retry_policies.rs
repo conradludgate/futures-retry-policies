@@ -28,35 +28,12 @@
 use std::{mem, ops::ControlFlow, time::Duration};
 
 use chrono::Utc;
+use retry_policies::RetryDecision;
 
 use crate::RetryPolicy;
 
-/// A simpler form of [`RetryPolicy`] that returns whether
-/// the value can be retried.
-pub trait ShouldRetry {
-    /// Whether the value should be re-attempted.
-    /// Return true if a retry is permitted, return false if a retry is forbidden.
-    /// `attempts` denotes how many prior attempts have been made (starts at 1).
-    fn should_retry(&self, attempts: u32) -> bool;
-}
-
-impl<T, E: ShouldRetry> ShouldRetry for Result<T, E> {
-    /// Result should retry if the error should retry.
-    /// Should not retry if ok
-    fn should_retry(&self, attempts: u32) -> bool {
-        match self {
-            Ok(_) => false,
-            Err(e) => e.should_retry(attempts),
-        }
-    }
-}
-
-impl<T> ShouldRetry for Option<T> {
-    /// Should retry if None
-    fn should_retry(&self, _: u32) -> bool {
-        self.is_none()
-    }
-}
+// exported for backwards compatability
+pub use super::ShouldRetry;
 
 pub struct RetryPolicies<P> {
     policy: P,
@@ -78,11 +55,8 @@ where
         let attempts = self.amount + 1;
         let n_past_retries = mem::replace(&mut self.amount, attempts);
         match self.policy.should_retry(n_past_retries) {
-            retry_policies::RetryDecision::Retry { execute_after }
-                if result.should_retry(attempts) =>
-            {
-                let dur = (execute_after - Utc::now()).to_std().unwrap_or_default();
-                ControlFlow::Continue(dur)
+            RetryDecision::Retry { execute_after } if result.should_retry(attempts) => {
+                ControlFlow::Continue((execute_after - Utc::now()).to_std().unwrap_or_default())
             }
             _ => ControlFlow::Break(result),
         }

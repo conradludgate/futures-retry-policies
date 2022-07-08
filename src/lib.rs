@@ -38,9 +38,12 @@
 //! }
 //! ```
 
+pub mod iter;
 pub mod retry_policies;
+pub mod sync;
 pub mod tokio;
 pub mod tracing;
+pub mod futures_retry;
 
 use std::{
     future::Future,
@@ -134,6 +137,17 @@ enum RetryState<Sleep, Fut> {
     Attempts(#[pin] Fut),
 }
 
+macro_rules! ready {
+    ($e:expr) => {
+        match $e {
+            Poll::Ready(t) => t,
+            Poll::Pending => {
+                return Poll::Pending;
+            }
+        }
+    };
+}
+
 impl<Policy, Sleeper, Sleep, Futures, Fut> Future
     for RetryFuture<Policy, Sleeper, Sleep, Futures, Fut>
 where
@@ -146,31 +160,68 @@ where
     type Output = Fut::Output;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut this = self.project();
-        // retry state machine
+        // Retry state machine:
         // 1. State goes from idle to attempting
         // 2. Once the attempt is ready, it checks if a retry is necessary.
         // 3. If a retry is necessary:
         //   i.   We transition to sleeping.
         //   ii.  And then transition back to idle.
         //   iii. And then loop back to 1
+        //
+        // This is the state-machine version of:
+        // ```
+        // loop {
+        //     match self.policy.should_retry((self.futures)().await) {
+        //         ControlFlow::Continue(dur) => (self.sleeper)(dur).await,
+        //         ControlFlow::Break(result) => break result,
+        //     }
+        // }
+        // ```
+        let mut this = self.project();
         loop {
             match this.state.as_mut().project() {
                 RetryStateProj::Idle => this.state.set(RetryState::Attempts((this.futures)())),
-                RetryStateProj::Attempts(fut) => match fut.poll(cx) {
-                    Poll::Ready(res) => match this.policy.should_retry(res) {
+                RetryStateProj::Attempts(fut) => {
+                    match this.policy.should_retry(ready!(fut.poll(cx))) {
                         ControlFlow::Continue(sleep) => {
                             this.state.set(RetryState::Sleeping((this.sleeper)(sleep)));
                         }
                         ControlFlow::Break(res) => return Poll::Ready(res),
-                    },
-                    Poll::Pending => return Poll::Pending,
-                },
-                RetryStateProj::Sleeping(sleep) => match sleep.poll(cx) {
-                    Poll::Ready(()) => this.state.set(RetryState::Idle),
-                    Poll::Pending => return Poll::Pending,
-                },
+                    }
+                }
+                RetryStateProj::Sleeping(sleep) => {
+                    ready!(sleep.poll(cx));
+                    this.state.set(RetryState::Idle)
+                }
             }
         }
     }
 }
+
+/// A simpler form of [`RetryPolicy`] that returns whether
+/// the value can be retried.
+pub trait ShouldRetry {
+    /// Whether the value should be re-attempted.
+    /// Return true if a retry is permitted, return false if a retry is forbidden.
+    /// `attempts` denotes how many prior attempts have been made (starts at 1).
+    fn should_retry(&self, attempts: u32) -> bool;
+}
+
+impl<T, E: ShouldRetry> ShouldRetry for Result<T, E> {
+    /// Result should retry if the error should retry.
+    /// Should not retry if ok
+    fn should_retry(&self, attempts: u32) -> bool {
+        match self {
+            Ok(_) => false,
+            Err(e) => e.should_retry(attempts),
+        }
+    }
+}
+
+impl<T> ShouldRetry for Option<T> {
+    /// Should retry if None
+    fn should_retry(&self, _: u32) -> bool {
+        self.is_none()
+    }
+}
+

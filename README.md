@@ -47,7 +47,8 @@ log your retries
 Add the `tokio` feature and you can use the convenience tokio retry methods to skip specifying
 `tokio::time::sleep`.
 
-You can also use the `futures_retry_policies::tokio::RetryFutureExt` trait to support
+You can also use the `futures_retry_policies::tokio::RetryFutureExt` trait to support calling `retry` directly
+on async functions.
 
 ```rust
 #[tokio::main]
