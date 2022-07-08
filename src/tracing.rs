@@ -1,7 +1,12 @@
+#![cfg(feature = "tracing")]
+#![cfg_attr(docsrs, doc(cfg(feature = "tracing")))]
+//! Retry features for [`tracing`] support
+
 use std::{fmt::Debug, ops::ControlFlow, time::Duration};
 
 use crate::RetryPolicy;
 
+/// A [`RetryPolicy`] that logs a warning if a retry is being attempted
 pub struct Traced<P>(pub P);
 
 impl<P, R> RetryPolicy<R> for Traced<P>

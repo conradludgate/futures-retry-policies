@@ -1,41 +1,7 @@
-//! Retry a future using the given [backoff policy](`RetryPolicy`) and sleep function.
-//!
-//! ```
-//! use futures_retry_policies::{tokio::retry, ShouldRetry};
-//! use retry_policies::policies::ExponentialBackoff;
-//!
-//! # #[derive(Debug)]
-//! enum Error { Retry, DoNotRetry }
-//! impl ShouldRetry for Error {
-//!     fn should_retry(&self) -> bool { matches!(self, Error::Retry) }
-//! }
-//! async fn make_request() -> Result<(), Error>  {
-//!     // make a request
-//!     # static COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-//!     # if COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < 2 { Err(Error::Retry) } else { Ok(()) }
-//! }
-//!
-//! #[tokio::main]
-//! async fn main() -> Result<(), Error> {
-//!     let backoff = ExponentialBackoff::builder().build_with_max_retries(3);
-//!     retry(backoff, make_request).await
-//! }
-//! ```
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-/// Polyfills for the [`retry_policies`] crate
-#[cfg(feature = "retry-policies")]
-#[cfg_attr(docsrs, doc(cfg(feature = "retry-policies")))]
 pub mod retry_policies;
-
-/// Retry features for the [tokio runtime](https:://tokio.rs)
-#[cfg(feature = "tokio")]
-#[cfg_attr(docsrs, doc(cfg(feature = "tokio")))]
 pub mod tokio;
-
-/// Retry features for [`tracing`] support
-#[cfg(feature = "tracing")]
-#[cfg_attr(docsrs, doc(cfg(feature = "tracing")))]
 pub mod tracing;
 
 use std::{
@@ -63,32 +29,39 @@ impl<P: RetryPolicy<R>, R> RetryPolicy<R> for &mut P {
     }
 }
 
-
 /// Retry a future using the given [backoff policy](`RetryPolicy`) and sleep function.
 ///
 /// ```
-/// use futures_retry_policies::{retry, ShouldRetry};
-/// use retry_policies::policies::ExponentialBackoff;
+/// use futures_retry_policies::{retry, RetryPolicy};
+/// use std::{ops::ControlFlow, time::Duration};
 ///
-/// # #[derive(Debug)]
-/// enum Error { Retry, DoNotRetry }
-/// impl ShouldRetry for Error {
-///     fn should_retry(&self) -> bool { matches!(self, Error::Retry) }
+/// pub struct Retries(usize);
+/// impl RetryPolicy<Result<(), &'static str>> for Retries {
+///     fn should_retry(&mut self, result: Result<(), &'static str>) -> ControlFlow<Result<(), &'static str>, Duration> {
+///         if self.0 > 0 && result.is_err() {
+///             self.0 -= 1;
+///             // continue to retry on error
+///             ControlFlow::Continue(Duration::from_millis(100))
+///         } else {
+///             // We've got a success, or we've exhauted our retries, so break
+///             ControlFlow::Break(result)
+///         }
+///     }
 /// }
-/// async fn make_request() -> Result<(), Error>  {
+///
+/// async fn make_request() -> Result<(), &'static str>  {
 ///     // make a request
 ///     # static COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-///     # if COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < 2 { Err(Error::Retry) } else { Ok(()) }
+///     # if COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < 2 { Err("fail") } else { Ok(()) }
 /// }
 ///
 /// #[tokio::main]
-/// async fn main() -> Result<(), Error> {
-///     let backoff = ExponentialBackoff::builder().build_with_max_retries(3);
-///     retry(backoff, tokio::time::sleep, make_request).await
+/// async fn main() -> Result<(), &'static str> {
+///     retry(Retries(3), tokio::time::sleep, make_request).await
 /// }
 /// ```
 pub fn retry<Policy, Sleeper, Sleep, Futures, Fut>(
-    backoff: Policy,
+    policy: Policy,
     sleeper: Sleeper,
     futures: Futures,
 ) -> RetryFuture<Policy, Sleeper, Sleep, Futures, Fut>
@@ -100,7 +73,7 @@ where
     Fut: Future,
 {
     RetryFuture {
-        backoff,
+        policy,
         sleeper,
         futures,
         state: RetryState::Idle,
@@ -110,7 +83,7 @@ where
 /// [`Future`] returned by [`retry`]
 #[pin_project]
 pub struct RetryFuture<Policy, Sleeper, Sleep, Futures, Fut> {
-    backoff: Policy,
+    policy: Policy,
     sleeper: Sleeper,
     futures: Futures,
     #[pin]
@@ -148,7 +121,7 @@ where
             match this.state.as_mut().project() {
                 RetryStateProj::Idle => this.state.set(RetryState::Attempts((this.futures)())),
                 RetryStateProj::Attempts(fut) => match fut.poll(cx) {
-                    Poll::Ready(res) => match this.backoff.should_retry(res) {
+                    Poll::Ready(res) => match this.policy.should_retry(res) {
                         ControlFlow::Continue(sleep) => {
                             this.state.set(RetryState::Sleeping((this.sleeper)(sleep)));
                         }

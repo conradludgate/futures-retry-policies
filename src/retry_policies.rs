@@ -1,10 +1,42 @@
+#![cfg(feature = "retry-policies")]
+#![cfg_attr(docsrs, doc(cfg(feature = "retry-policies")))]
+//! Polyfills for the [`retry_policies`] crate
+//! Retry a future using the given [backoff policy](`RetryPolicy`) and sleep function.
+//!
+//! ```
+//! use futures_retry_policies::{retry, retry_policies::{ShouldRetry, RetryPolicies}};
+//! use retry_policies::policies::ExponentialBackoff;
+//!
+//! # #[derive(Debug)]
+//! enum Error { Retry, DoNotRetry }
+//! impl ShouldRetry for Error {
+//!     fn should_retry(&self, _: u32) -> bool { matches!(self, Error::Retry) }
+//! }
+//! async fn make_request() -> Result<(), Error>  {
+//!     // make a request
+//!     # static COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+//!     # if COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < 2 { Err(Error::Retry) } else { Ok(()) }
+//! }
+//!
+//! #[tokio::main]
+//! async fn main() -> Result<(), Error> {
+//!     let backoff = ExponentialBackoff::builder().build_with_max_retries(3);
+//!     let policy = RetryPolicies::new(backoff);
+//!     retry(policy, tokio::time::sleep, make_request).await
+//! }
+//! ```
 use std::{mem, ops::ControlFlow, time::Duration};
 
 use chrono::Utc;
 
 use crate::RetryPolicy;
 
+/// A simpler form of [`RetryPolicy`] that returns whether
+/// the value can be retried.
 pub trait ShouldRetry {
+    /// Whether the value should be re-attempted.
+    /// Return true if a retry is permitted, return false if a retry is forbidden.
+    /// `attempts` denotes how many prior attempts have been made (starts at 1).
     fn should_retry(&self, attempts: u32) -> bool;
 }
 
@@ -87,10 +119,10 @@ mod tests {
 
     /// A [`ShouldRetry`] wrapper that always returns false
     #[derive(Debug)]
-    pub struct RetryAfter(u32);
-    impl ShouldRetry for RetryAfter {
+    pub struct RetryUntil(u32);
+    impl ShouldRetry for RetryUntil {
         fn should_retry(&self, attempts: u32) -> bool {
-            attempts >= self.0
+            attempts < self.0
         }
     }
 
@@ -105,7 +137,7 @@ mod tests {
         let mut policy = RetryPolicies::new(backoff);
         let _: AlwaysRetry = retry(&mut policy, sleep, || async { AlwaysRetry }).await;
 
-        assert_eq!(policy.amount, 3); // 3 total retry attempts
+        assert_eq!(policy.amount, 4); // 4 total attempts
     }
 
     #[tokio::test]
@@ -113,7 +145,7 @@ mod tests {
         let backoff = ExponentialBackoff::builder().build_with_max_retries(3);
 
         let mut policy = RetryPolicies::new(backoff);
-        retry(&mut policy, sleep, || async { RetryAfter(2) }).await;
+        retry(&mut policy, sleep, || async { RetryUntil(2) }).await;
 
         assert_eq!(policy.amount, 2); // succeeds after 2 attempts
     }
@@ -125,6 +157,6 @@ mod tests {
         let mut policy = RetryPolicies::new(backoff);
         retry(&mut policy, sleep, || async { NeverRetry }).await;
 
-        assert_eq!(policy.amount, 0); // no retries
+        assert_eq!(policy.amount, 1); // only 1 attempt
     }
 }
