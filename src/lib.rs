@@ -37,13 +37,78 @@
 //!     retry(Retries(3), tokio::time::sleep, make_request).await
 //! }
 //! ```
+//!
+//! ## Tracing
+//!
+//! Add the `tracing` feature and you can use the `Traced` RetryPolicy to automatically
+//! log your retries
+//!
+//! ## Tokio
+//!
+//! Add the `tokio` feature and you can use the convenience tokio retry methods to skip specifying
+//! [`tokio::time::sleep`](::tokio::time::sleep).
+//!
+//! You can also use the [`tokio::RetryFutureExt`] trait to support calling `retry` directly
+//! on async functions.
+//!
+//! ```
+//! # use futures_retry_policies::{retry, RetryPolicy};
+//! # use std::{ops::ControlFlow, time::Duration};
+//! # pub struct Retries(usize);
+//! # impl RetryPolicy<Result<(), &'static str>> for Retries {
+//! #     fn should_retry(&mut self, result: Result<(), &'static str>) -> ControlFlow<Result<(), &'static str>, Duration> {
+//! #         if self.0 > 0 && result.is_err() {
+//! #             self.0 -= 1;
+//! #             ControlFlow::Continue(Duration::from_millis(100))
+//! #         } else {
+//! #             ControlFlow::Break(result)
+//! #         }
+//! #     }
+//! # }
+//! # async fn make_request() -> Result<(), &'static str>  {
+//!     # static COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+//!     # if COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < 2 { Err("fail") } else { Ok(()) }
+//! # }
+//! use futures_retry_policies::tokio::RetryFutureExt;
+//! #[tokio::main]
+//! async fn main() -> Result<(), &'static str> {
+//!     make_request.retry(Retries(3)).await
+//! }
+//! ```
+//!
+//! ## retry-policies
+//!
+//! This crate has first class support for the [`retry-policies crate`](::retry_policies)
+//!
+//! ```
+//! use futures_retry_policies::{retry, retry_policies::{ShouldRetry, RetryPolicies}};
+//! use retry_policies::policies::ExponentialBackoff;
+//!
+//! # #[derive(Debug)]
+//! enum Error { Retry, DoNotRetry }
+//! impl ShouldRetry for Error {
+//!     fn should_retry(&self, _: u32) -> bool { matches!(self, Error::Retry) }
+//! }
+//! async fn make_request() -> Result<(), Error>  {
+//!     // make a request
+//!     # static COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+//!     # if COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < 2 { Err(Error::Retry) } else { Ok(()) }
+//! }
+//!
+//! #[tokio::main]
+//! async fn main() -> Result<(), Error> {
+//!     let backoff = ExponentialBackoff::builder().build_with_max_retries(3);
+//!     let policy = RetryPolicies::new(backoff);
+//!     retry(policy, tokio::time::sleep, make_request).await
+//! }
+//! ```
 
+pub mod futures_retry;
 pub mod iter;
 pub mod retry_policies;
 pub mod sync;
 pub mod tokio;
 pub mod tracing;
-pub mod futures_retry;
 
 use std::{
     future::Future,
@@ -120,7 +185,7 @@ where
     }
 }
 
-/// [`Future`] returned by [`retry`]
+/// [`Future`] returned by [`retry`](crate::retry)
 #[pin_project]
 pub struct RetryFuture<Policy, Sleeper, Sleep, Futures, Fut> {
     policy: Policy,
@@ -224,4 +289,3 @@ impl<T> ShouldRetry for Option<T> {
         self.is_none()
     }
 }
-

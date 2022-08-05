@@ -1,6 +1,6 @@
 #![cfg(feature = "tokio")]
 #![cfg_attr(docsrs, doc(cfg(feature = "tokio")))]
-//! Retry features for the [tokio runtime](https:://tokio.rs)
+//! Retry features for the [tokio runtime](https://tokio.rs)
 
 use std::{future::Future, time::Duration};
 use tokio::time::{sleep, Sleep};

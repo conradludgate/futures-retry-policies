@@ -1,3 +1,5 @@
+# futures-retry-policies
+
 A crate to help retry futures.
 
 ```rust
@@ -45,9 +47,9 @@ log your retries
 ## Tokio
 
 Add the `tokio` feature and you can use the convenience tokio retry methods to skip specifying
-`tokio::time::sleep`.
+[`tokio::time::sleep`].
 
-You can also use the `futures_retry_policies::tokio::RetryFutureExt` trait to support calling `retry` directly
+You can also use the [`tokio::RetryFutureExt`] trait to support calling `retry` directly
 on async functions.
 
 ```rust
@@ -59,13 +61,12 @@ async fn main() -> Result<(), &'static str> {
 
 ## retry-policies
 
-This crate has first class support for the [`retry-policies crate`](https://crates.io/crates/retry-policies)
+This crate has first class support for the [`retry-policies crate`](https://!crates.io/crates/retry-policies)
 
 ```rust
 use futures_retry_policies::{retry, retry_policies::{ShouldRetry, RetryPolicies}};
 use retry_policies::policies::ExponentialBackoff;
 
-# #[derive(Debug)]
 enum Error { Retry, DoNotRetry }
 impl ShouldRetry for Error {
     fn should_retry(&self, _: u32) -> bool { matches!(self, Error::Retry) }
