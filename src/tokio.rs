@@ -44,7 +44,7 @@ pub fn retry<Policy, Futures, Fut>(
 ) -> RetryFuture<Policy, Futures, Fut>
 where
     Policy: RetryPolicy<Fut::Output>,
-    Futures: Fn() -> Fut,
+    Futures: FnMut() -> Fut,
     Fut: Future,
 {
     super::retry(backoff, sleep, futures)
@@ -91,7 +91,7 @@ where
     fn retry<Policy>(self, policy: Policy) -> RetryFuture<Policy, Self, Fut>
     where
         Policy: RetryPolicy<Fut::Output>,
-        Self: Fn() -> Fut + Sized,
+        Self: FnMut() -> Fut + Sized,
     {
         retry(policy, self)
     }
@@ -99,7 +99,7 @@ where
 
 impl<Futures, Fut> RetryFutureExt<Fut> for Futures
 where
-    Futures: Fn() -> Fut,
+    Futures: FnMut() -> Fut,
     Fut: Future,
 {
 }

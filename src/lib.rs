@@ -172,9 +172,9 @@ pub fn retry<Policy, Sleeper, Sleep, Futures, Fut>(
 ) -> RetryFuture<Policy, Sleeper, Sleep, Futures, Fut>
 where
     Policy: RetryPolicy<Fut::Output>,
-    Sleeper: Fn(Duration) -> Sleep,
+    Sleeper: FnMut(Duration) -> Sleep,
     Sleep: Future<Output = ()>,
-    Futures: Fn() -> Fut,
+    Futures: FnMut() -> Fut,
     Fut: Future,
 {
     RetryFuture {
@@ -217,9 +217,9 @@ impl<Policy, Sleeper, Sleep, Futures, Fut> Future
     for RetryFuture<Policy, Sleeper, Sleep, Futures, Fut>
 where
     Policy: RetryPolicy<Fut::Output>,
-    Sleeper: Fn(Duration) -> Sleep,
+    Sleeper: FnMut(Duration) -> Sleep,
     Sleep: Future<Output = ()>,
-    Futures: Fn() -> Fut,
+    Futures: FnMut() -> Fut,
     Fut: Future,
 {
     type Output = Fut::Output;

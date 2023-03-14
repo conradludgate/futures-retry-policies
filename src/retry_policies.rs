@@ -133,4 +133,29 @@ mod tests {
 
         assert_eq!(policy.amount, 1); // only 1 attempt
     }
+
+    #[tokio::test]
+    async fn immediately_succeed_fn_mut() {
+        let backoff = ExponentialBackoff::builder().build_with_max_retries(3);
+
+        let mut policy = RetryPolicies::new(backoff);
+        let mut counter = 0;
+
+        retry(&mut policy, sleep, || {
+            counter += 1;
+            async move {
+                if counter < 2 {
+                    Err(AlwaysRetry)
+                } else {
+                    Ok(())
+                }
+            }
+        })
+        .await
+        .unwrap();
+
+        // 2 attempts
+        assert_eq!(counter, 2);
+        assert_eq!(policy.amount, 2);
+    }
 }
