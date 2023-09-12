@@ -1,6 +1,6 @@
 //! Convenience types for using iterators as policies.
 //!
-//! This allows for good interopt with the [retry crate](::retry)
+//! This allows for good interop with the [retry crate](::retry)
 
 use std::{ops::ControlFlow, time::Duration};
 
