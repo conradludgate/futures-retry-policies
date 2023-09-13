@@ -21,7 +21,7 @@ use crate::RetryPolicy;
 ///             // continue to retry on error
 ///             ControlFlow::Continue(Duration::from_millis(100))
 ///         } else {
-///             // We've got a success, or we've exhauted our retries, so break
+///             // We've got a success, or we've exhausted our retries, so break
 ///             ControlFlow::Break(result)
 ///         }
 ///     }
@@ -67,7 +67,7 @@ pub type RetryFuture<Policy, Futures, Fut> =
 ///             // continue to retry on error
 ///             ControlFlow::Continue(Duration::from_millis(100))
 ///         } else {
-///             // We've got a success, or we've exhauted our retries, so break
+///             // We've got a success, or we've exhausted our retries, so break
 ///             ControlFlow::Break(result)
 ///         }
 ///     }

@@ -1,6 +1,6 @@
 #![cfg(feature = "futures-retry")]
 #![cfg_attr(docsrs, doc(cfg(feature = "futures-retry")))]
-//! Retry interopt with [`futures-retry`](futures_retry)
+//! Retry interop with [`futures-retry`](futures_retry)
 
 use std::{ops::ControlFlow, time::Duration};
 
