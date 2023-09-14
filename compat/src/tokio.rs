@@ -103,3 +103,66 @@ where
     Fut: Future,
 {
 }
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use futures_retry_policies_core::RetryPolicy;
+    use retry_policies::policies::ExponentialBackoff;
+
+    use crate::{retry_policies::RetryPolicies, tokio::RetryFutureExt, ShouldRetry};
+
+    struct Error(u32);
+    impl ShouldRetry for Error {
+        fn should_retry(&self, attempts: u32) -> bool {
+            attempts <= self.0
+        }
+    }
+
+    /// exponential backoff with no jitter, max 3 attempts.
+    /// 1s * 2^0, 2^1, 2^2
+    fn policy<R: ShouldRetry>() -> impl RetryPolicy<R> {
+        let backoff = ExponentialBackoff::builder()
+            .retry_bounds(Duration::from_secs(1), Duration::from_secs(60))
+            .jitter(retry_policies::Jitter::None)
+            .build_with_max_retries(3);
+        RetryPolicies::new(backoff)
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn retry_full() {
+        async fn req() -> Result<(), Error> {
+            // always retry
+            Err(Error(u32::MAX))
+        }
+
+        let start = tokio::time::Instant::now();
+        req.retry(policy()).await.unwrap_err();
+        assert_eq!(start.elapsed(), Duration::from_secs(1 + 2 + 4));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn retry_none() {
+        async fn req() -> Result<(), Error> {
+            // never retry
+            Err(Error(0))
+        }
+
+        let start = tokio::time::Instant::now();
+        req.retry(policy()).await.unwrap_err();
+        assert_eq!(start.elapsed(), Duration::ZERO);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn retry_twice() {
+        async fn req() -> Result<(), Error> {
+            // retry twice
+            Err(Error(2))
+        }
+
+        let start = tokio::time::Instant::now();
+        req.retry(policy()).await.unwrap_err();
+        assert_eq!(start.elapsed(), Duration::from_secs(1 + 2));
+    }
+}

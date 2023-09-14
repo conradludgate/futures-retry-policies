@@ -16,4 +16,3 @@ pin-project = "1"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
-retry = "2.0.0"

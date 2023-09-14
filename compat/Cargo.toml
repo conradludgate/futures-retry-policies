@@ -22,7 +22,6 @@ retry-policies = ["dep:retry-policies", "chrono"]
 retry-crate = ["retry"]
 
 [dependencies]
-pin-project = "1"
 futures-retry-policies-core = { version = "0.1.0", path = "../core" }
 
 ## Provides tokio convenience methods
@@ -42,7 +41,7 @@ retry = { version = "2", optional = true }
 futures-retry = { version = "0.6", optional = true }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["full", "test-util"] }
 retry = "2.0.0"
 
 # Properly document all features on docs.rs

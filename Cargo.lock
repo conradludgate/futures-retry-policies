@@ -184,7 +184,6 @@ dependencies = [
  "chrono",
  "futures-retry",
  "futures-retry-policies-core",
- "pin-project",
  "retry",
  "retry-policies",
  "tokio",
@@ -196,7 +195,6 @@ name = "futures-retry-policies-core"
 version = "0.1.0"
 dependencies = [
  "pin-project",
- "retry",
  "tokio",
 ]
 
