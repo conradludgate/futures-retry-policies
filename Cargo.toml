@@ -1,6 +1,6 @@
 [package]
 name = "futures-retry-policies"
-version = "0.2.3"
+version = "0.2.4"
 edition = "2021"
 authors = ["Conrad Ludgate <conradludgate@gmail.com>"]
 description = "Retriable Futures"
@@ -22,7 +22,7 @@ retry-policies = ["dep:retry-policies", "chrono"]
 retry-crate = ["retry"]
 
 [dependencies]
-pin-project = "1"
+futures-retry-policies-core = "0.1.0"
 
 ## Provides tokio convenience methods
 tokio = { version = "1", optional = true, features = ["time"] }
