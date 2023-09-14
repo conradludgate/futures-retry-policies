@@ -26,6 +26,7 @@ impl RetryPolicy<Result<(), &'static str>> for Retries {
     }
 }
 
+/// Makes a request, like a HTTP request or gRPC request which you want to retry
 async fn make_request() -> Result<(), &'static str>  {
     // make a request
     # static COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
