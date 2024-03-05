@@ -54,7 +54,7 @@ where
     fn should_retry(&mut self, result: R) -> ControlFlow<R, Duration> {
         let attempts = self.amount + 1;
         let n_past_retries = mem::replace(&mut self.amount, attempts);
-        match self.policy.should_retry(n_past_retries) {
+        match self.policy.should_retry(chrono::Utc::now(), n_past_retries) {
             RetryDecision::Retry { execute_after } if result.should_retry(attempts) => {
                 ControlFlow::Continue((execute_after - Utc::now()).to_std().unwrap_or_default())
             }

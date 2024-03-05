@@ -28,7 +28,7 @@ futures-retry-policies-core = { version = "0.1.0", path = "../core" }
 tokio = { version = "1", optional = true, features = ["time"] }
 
 # documented above (retry-policies)
-retry-policies = { version = "0.2", optional = true }
+retry-policies = { version = "0.3", optional = true }
 chrono = { version = "0.4", optional = true, default-features = false, features = ["std", "clock"] }
 
 ## Enables traced retry policies
